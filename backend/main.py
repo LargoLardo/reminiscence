@@ -28,7 +28,7 @@ async def create_moment(
         f.write(content)
     
     cmd = [
-        "python", "prepare_colmap_windows.py",
+        "python", r"C:\Users\login\reminiscence\reminiscence\prepare_colmap_windows.py",
         file_path, "output",
         "--fps", "20",
         "--overwrite",
