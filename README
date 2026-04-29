@@ -1,0 +1,16 @@
+download colmap binary for windows:
+https://github.com/colmap/colmap/releases
+(cuda if you have nvidia gpu, otherwise no cuda)
+
+extract to downloads, and KEEP in downloads, otherwise change following paths accordingly (DEFAULT_COLMAP_PATHS in prepare_colmap_windows.py and the path for the colmap gui command you run in cmd/powershell):
+
+run:
+python prepare_colmap_windows.py <input_folder> <output_folder> --overwrite --export-ply
+
+open cmd/powershell and run:
+"C:\Users\login\Downloads\colmap-x64-windows-cuda\COLMAP.bat" gui
+
+copy the path to your output file
+
+go File > Import model > go to your output file > sparse > 0 
+and then select

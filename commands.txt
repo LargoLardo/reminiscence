@@ -1,0 +1,30 @@
+For your ~1000 images, this uses sequential matching by default, which is good if the images are ordered/video frames.
+  python prepare_colmap.py data output --overwrite
+
+If the images are unordered photos use exhaustive matching:
+  python prepare_colmap.py data output --matcher exhaustive --overwrite
+
+To also export the sparse .ply
+  python prepare_colmap.py data output --overwrite --export-ply
+That will create:
+  output/sparse_points.ply
+
+After it finishes your Gaussian Splatting input folder is:
+  C:\Users\login\colmap\output
+It should contain:
+  output/imagesoutput/sparse/0/cameras.binoutput/sparse/0/images.binoutput/sparse/0/points3D.bin
+Then you can use this folder with Gaussian Splatting training.
+
+For videos:
+python prepare_colmap.py clip.mp4 output --fps 2 --frame-width 1600 --overwrite
+
+To create a sparse .ply from a video:
+python prepare_colmap.py clip.mp4 output --fps 2 --frame-width 1600 --overwrite --export-ply
+
+----
+For installing colmap
+  python prepare_colmap_windows.py data output --overwrite --export-ply
+
+
+For opening viewer, write in cmd:
+  "C:\Users\login\Downloads\colmap-x64-windows-cuda\COLMAP.bat" gui
