@@ -1,3 +1,12 @@
+For setting up clipping:
+ CMD + R in XCode
+ run python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload in terminal
+ create a new terminal and run
+  ngrok http 8000
+
+-----
+
+
 COLMAP / Gaussian Splatting Prep Setup
 =====================================
 

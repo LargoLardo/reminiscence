@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from pathlib import Path
 import uuid
+import subprocess
 
 app = FastAPI()
 
@@ -25,6 +26,16 @@ async def create_moment(
     with open(file_path, "wb") as f:
         content = await video.read()
         f.write(content)
+    
+    cmd = [
+        "python", "prepare_colmap_windows.py",
+        file_path, "output",
+        "--fps", "20",
+        "--overwrite",
+        "--export-ply",
+    ]
+
+    subprocess.run(cmd, check=True)
 
     return {
         "id": moment_id,
