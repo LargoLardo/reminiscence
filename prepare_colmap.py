@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import struct
 from pathlib import Path
+from typing import Optional
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -57,7 +58,7 @@ def copy_images(data_dir: Path, input_dir: Path):
     print(f"Copied {len(images)} images into {input_dir}")
 
 
-def extract_video_frames(video_path: Path, input_dir: Path, fps: float, width: int):
+def extract_video_frames(video_path: Path, input_dir: Path, fps: float, width: Optional[int]):
     if shutil.which("ffmpeg") is None:
         raise RuntimeError(
             "FFmpeg was not found on PATH. Install FFmpeg and make sure 'ffmpeg' works in PowerShell."
@@ -66,13 +67,16 @@ def extract_video_frames(video_path: Path, input_dir: Path, fps: float, width: i
     input_dir.mkdir(parents=True, exist_ok=True)
 
     output_pattern = input_dir / "frame_%05d.jpg"
+    video_filter = f"fps={fps}"
 
-    # scale=WIDTH:-1 keeps aspect ratio.
+    if width is not None:
+        video_filter += f",scale={width}:-1"
+
     # q:v 2 gives high-quality JPG frames.
     run([
         "ffmpeg",
         "-i", str(video_path),
-        "-vf", f"fps={fps},scale={width}:-1",
+        "-vf", video_filter,
         "-q:v", "2",
         str(output_pattern),
     ])
@@ -288,8 +292,8 @@ def main():
     parser.add_argument(
         "--frame-width",
         type=int,
-        default=1600,
-        help="Width of extracted video frames. Default: 1600."
+        default=None,
+        help="Optional width for extracted video frames. Default: keep original video size."
     )
 
     parser.add_argument(

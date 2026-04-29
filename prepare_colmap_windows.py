@@ -2,7 +2,9 @@ import argparse
 import shutil
 import subprocess
 import struct
+from time import time
 from pathlib import Path
+from typing import Optional
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -15,6 +17,8 @@ DEFAULT_COLMAP_PATHS = [
     r"C:\Program Files\COLMAP\COLMAP.bat",
     r"C:\Program Files\COLMAP\bin\colmap.exe",
 ]
+
+START_TIME = time()
 
 
 def find_colmap(user_path=None):
@@ -100,16 +104,20 @@ def copy_images(data_dir: Path, input_dir: Path):
     print(f"Copied {len(images)} images into {input_dir}")
 
 
-def extract_video_frames(video_path: Path, input_dir: Path, fps: float, width: int):
+def extract_video_frames(video_path: Path, input_dir: Path, fps: float, width: Optional[int]):
     find_ffmpeg()
 
     input_dir.mkdir(parents=True, exist_ok=True)
     output_pattern = input_dir / "frame_%05d.jpg"
+    video_filter = f"fps={fps}"
+
+    if width is not None:
+        video_filter += f",scale={width}:-1"
 
     run([
         "ffmpeg",
         "-i", str(video_path),
-        "-vf", f"fps={fps},scale={width}:-1",
+        "-vf", video_filter,
         "-q:v", "2",
         str(output_pattern),
     ])
@@ -198,64 +206,6 @@ def find_best_sparse_model(sparse_dir: Path):
     return best_model
 
 
-def count_images(image_dir: Path):
-    return sum(
-        1 for p in image_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in IMAGE_EXTS
-    )
-
-
-def run_mapper_with_retries(
-    colmap_cmd: str,
-    database_path: Path,
-    input_dir: Path,
-    sparse_dir: Path,
-    retries: int = 2,
-):
-    def mapper_cmd(output_path: Path):
-        return [
-            colmap_cmd,
-            "mapper",
-            "--database_path", str(database_path),
-            "--image_path", str(input_dir),
-            "--output_path", str(output_path),
-            "--Mapper.multiple_models", "1",
-            "--Mapper.max_num_models", "50",
-        ]
-
-    run(mapper_cmd(sparse_dir))
-    best_model = find_best_sparse_model(sparse_dir)
-    best_count = read_colmap_count(best_model / "images.bin")
-    target_count = min(100, max(10, count_images(input_dir) // 10))
-
-    for attempt in range(1, retries + 1):
-        if best_count >= target_count:
-            break
-
-        retry_dir = sparse_dir.parent / f"{sparse_dir.name}_retry_{attempt}"
-
-        if retry_dir.exists():
-            shutil.rmtree(retry_dir)
-
-        retry_dir.mkdir(parents=True, exist_ok=True)
-
-        print(
-            f"Only {best_count} images registered; retrying mapper "
-            f"({attempt}/{retries})..."
-        )
-
-        run(mapper_cmd(retry_dir))
-        candidate_model = find_best_sparse_model(retry_dir)
-        candidate_count = read_colmap_count(candidate_model / "images.bin")
-
-        if candidate_count > best_count:
-            best_model = candidate_model
-            best_count = candidate_count
-
-    print(f"Selected sparse model: {best_model}")
-    return best_model
-
-
 def run_colmap(
     colmap_cmd: str,
     output_dir: Path,
@@ -285,6 +235,8 @@ def run_colmap(
             colmap_cmd,
             "sequential_matcher",
             "--database_path", str(database_path),
+            "--SequentialMatching.overlap", "30",
+            "--SequentialMatching.quadratic_overlap", "1",
         ])
     else:
         run([
@@ -293,12 +245,17 @@ def run_colmap(
             "--database_path", str(database_path),
         ])
 
-    sparse_model = run_mapper_with_retries(
-        colmap_cmd=colmap_cmd,
-        database_path=database_path,
-        input_dir=input_dir,
-        sparse_dir=distorted_sparse_dir,
-    )
+    run([
+        colmap_cmd,
+        "mapper",
+        "--database_path", str(database_path),
+        "--image_path", str(input_dir),
+        "--output_path", str(distorted_sparse_dir),
+        "--Mapper.multiple_models", "1",
+        "--Mapper.max_num_models", "50",
+    ])
+
+    sparse_model = find_best_sparse_model(distorted_sparse_dir)
 
     run([
         colmap_cmd,
@@ -353,8 +310,8 @@ def main():
     parser.add_argument(
         "--frame-width",
         type=int,
-        default=1600,
-        help="Width of extracted video frames. Default: 1600."
+        default=None,
+        help="Optional width for extracted video frames. Default: keep original video size."
     )
 
     parser.add_argument(
@@ -427,7 +384,7 @@ def main():
         export_ply=args.export_ply,
     )
 
-    print("\nDone.")
+    print("\nDone. Took {:.1f} seconds.".format(time() - START_TIME))
     print("Gaussian Splatting-ready folder:")
     print(output_dir)
 

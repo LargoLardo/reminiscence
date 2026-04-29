@@ -1,16 +1,209 @@
-download colmap binary for windows:
-https://github.com/colmap/colmap/releases
-(cuda if you have nvidia gpu, otherwise no cuda)
+COLMAP / Gaussian Splatting Prep Setup
+=====================================
 
-extract to downloads, and KEEP in downloads, otherwise change following paths accordingly (DEFAULT_COLMAP_PATHS in prepare_colmap_windows.py and the path for the colmap gui command you run in cmd/powershell):
+This project prepares an image folder or video for COLMAP and Gaussian
+Splatting-style training.
 
-run:
-python prepare_colmap_windows.py <input_folder> <output_folder> --overwrite --export-ply
+The main Windows script is:
 
-open cmd/powershell and run:
-"C:\Users\login\Downloads\colmap-x64-windows-cuda\COLMAP.bat" gui
+    prepare_colmap_windows.py
 
-copy the path to your output file
+It runs:
 
-go File > Import model > go to your output file > sparse > 0 
-and then select
+    1. Copy images or extract video frames
+    2. COLMAP feature extraction
+    3. COLMAP matching
+    4. COLMAP mapper
+    5. COLMAP image undistortion
+    6. Optional sparse PLY export
+
+
+Requirements
+============
+
+Required:
+
+    Python 3.10+
+    COLMAP for Windows
+
+Required only for video input:
+
+    FFmpeg
+
+Python packages:
+
+    None are required by the current scripts.
+
+You do not need a Python virtual environment for the current scripts, because
+they only use the Python standard library and external programs.
+
+
+Install COLMAP
+==============
+
+Download COLMAP for Windows and unzip it.
+
+This script checks these paths automatically:
+
+    C:\Users\login\Downloads\colmap-x64-windows-cuda\COLMAP.bat
+    C:\Users\login\Downloads\colmap-x64-windows-cuda\bin\colmap.exe
+    C:\Program Files\COLMAP\COLMAP.bat
+    C:\Program Files\COLMAP\bin\colmap.exe
+
+If COLMAP is somewhere else, pass it manually:
+
+    python prepare_colmap_windows.py data output --colmap "C:\path\to\COLMAP.bat" --overwrite --export-ply
+
+To check COLMAP GUI:
+
+    "C:\Users\login\Downloads\colmap-x64-windows-cuda\COLMAP.bat" gui
+
+
+Install FFmpeg For Videos
+=========================
+
+FFmpeg is only needed when your input is a video file.
+
+Recommended Windows install:
+
+    winget install --id Gyan.FFmpeg -e
+
+After installing, close and reopen PowerShell, then check:
+
+    ffmpeg -version
+
+If you do not install FFmpeg, you can still use the script with an image folder.
+
+Run On Image Folder
+===================
+
+From the project folder:
+
+    python prepare_colmap_windows.py data output --overwrite --export-ply
+
+For the small test folder:
+
+    python prepare_colmap_windows.py data_test output_data_test --overwrite --export-ply
+
+
+Run On Video
+============
+
+Example:
+
+    python prepare_colmap_windows.py clip.mp4 output_video --fps 2 --overwrite --export-ply
+
+Video options:
+
+    --fps 2
+        Extracts 2 frames per second.
+
+    --frame-width 1600
+        Optional. Resizes extracted video frames to 1600 pixels wide.
+        If omitted, extracted frames keep the original video size.
+
+Supported video extensions:
+
+    .mp4
+    .mov
+    .avi
+    .mkv
+    .webm
+
+
+Useful Options
+==============
+
+    --overwrite
+        Deletes and recreates the output folder.
+
+    --export-ply
+        Exports a sparse COLMAP point cloud:
+
+            output\sparse_points.ply
+
+    --matcher sequential
+        Good for ordered video frames. This is the default.
+
+    --matcher exhaustive
+        Better for unordered photos, but slower.
+
+    --camera-model OPENCV
+        Default camera model used by the script.
+
+
+Output Structure
+================
+
+After a successful run, the output folder should contain:
+
+    output\input
+        Original copied images or extracted video frames.
+
+    output\distorted\database.db
+        COLMAP database.
+
+    output\distorted\sparse
+        Original COLMAP sparse reconstruction models.
+
+    output\images
+        Undistorted images for registered frames.
+
+    output\sparse\0
+        Final sparse model in the layout expected by Gaussian Splatting.
+
+    output\sparse_points.ply
+        Optional sparse PLY if --export-ply was used.
+
+
+Open In COLMAP GUI
+==================
+
+To view the final reconstruction, open:
+
+    output\sparse\0
+
+If COLMAP asks:
+
+    Directory does not contain a project.ini...
+
+Click:
+
+    No
+
+That means "only visualize the reconstruction".
+
+Click Yes only if you want to resume reconstruction and provide:
+
+    Database:
+        output\distorted\database.db
+
+    Images:
+        output\input
+
+
+Notes On Sparse Results
+=======================
+
+COLMAP will not always register every input image.
+
+For example, 700 input frames does not mean 700 registered frames. COLMAP only
+keeps images it can connect with enough reliable geometric matches.
+
+If the model has very few frames or points:
+
+    - Use sharper images.
+    - Use higher resolution input.
+    - Add more side-to-side camera movement, not only forward motion.
+    - Improve lighting.
+    - Avoid blur and reflections.
+    - Add visible texture to plain surfaces if possible.
+    - Try --matcher exhaustive for unordered photos.
+
+For dense point clouds, run COLMAP dense stereo after sparse reconstruction:
+
+    patch_match_stereo
+    stereo_fusion
+
+The sparse model is only feature points; it is not supposed to be a full dense
+surface by itself.

@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import struct
 from pathlib import Path
+from typing import Optional
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -71,12 +72,15 @@ def copy_images_to_input(image_folder: Path, input_dir: Path):
     print(f"Copied {len(images)} images to {input_dir}")
 
 
-def extract_frames_from_video(video_path: Path, input_dir: Path, fps: float, max_width: int):
+def extract_frames_from_video(video_path: Path, input_dir: Path, fps: float, max_width: Optional[int]):
     input_dir.mkdir(parents=True, exist_ok=True)
 
     output_pattern = input_dir / "frame_%05d.jpg"
 
-    vf = f"fps={fps},scale={max_width}:-1"
+    vf = f"fps={fps}"
+
+    if max_width is not None:
+        vf += f",scale={max_width}:-1"
 
     run_command([
         "ffmpeg",
@@ -357,8 +361,8 @@ def main():
     parser.add_argument(
         "--frame-width",
         type=int,
-        default=1600,
-        help="Width for extracted video frames. Default: 1600",
+        default=None,
+        help="Optional width for extracted video frames. Default: keep original video size.",
     )
 
     parser.add_argument(
