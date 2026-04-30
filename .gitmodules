@@ -1,3 +1,6 @@
 [submodule "unity_renderer"]
 	path = unity_renderer
 	url = https://github.com/LargoLardo/gs_vr_unity_renderer.git
+[submodule "swift-app"]
+	path = swift-app
+	url = https://github.com/foolanke/swift-reminiscence.git
