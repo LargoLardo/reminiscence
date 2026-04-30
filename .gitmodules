@@ -1,0 +1,3 @@
+[submodule "unity_renderer"]
+	path = unity_renderer
+	url = https://github.com/LargoLardo/gs_vr_unity_renderer.git

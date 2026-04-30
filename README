@@ -1,9 +1,12 @@
 For setting up clipping:
- CMD + R in XCode
- run python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload in terminal
- create a new terminal and run
+ run:
+ cd backend
+ run:
+  python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload 
+in terminal
+create a new local terminal and run:
   ngrok http 8000
-
+CMD + R in XCode
 -----
 
 
@@ -216,3 +219,7 @@ For dense point clouds, run COLMAP dense stereo after sparse reconstruction:
 
 The sparse model is only feature points; it is not supposed to be a full dense
 surface by itself.
+
+=========================================================================
+
+Use OpenXR in Unity in order to load and move around in VR with it. 
