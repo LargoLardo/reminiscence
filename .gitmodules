@@ -4,3 +4,12 @@
 [submodule "swift-app"]
 	path = swift-app
 	url = https://github.com/foolanke/swift-reminiscence.git
+[submodule "swift-app2"]
+	path = swift-app2
+	url = https://github.com/foolanke/swift-reminiscence
+[submodule "unity_gs_renderer"]
+	path = unity_gs_renderer
+	url = https://github.com/LargoLardo/gs_vr_unity_renderer.git
+[submodule "gs_unity_renderer"]
+	path = gs_unity_renderer
+	url = https://github.com/LargoLardo/gs_vr_unity_renderer.git
