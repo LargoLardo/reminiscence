@@ -1,0 +1,16 @@
+.git
+.vscode
+**/__pycache__
+**/*.pyc
+backend/uploads
+backend/output
+fastgs/datasets
+fastgs/output
+fastgs/**/build
+fastgs/**/*.egg-info
+unity_renderer
+gs_unity_renderer
+swift-app
+frontend/node_modules
+frontend/dist
+.tmp-fastgs-upstream

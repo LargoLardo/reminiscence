@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import shlex
@@ -100,6 +101,49 @@ def _build_wsl_training_command(
 	)
 
 
+def _run_native_training(
+	fastgs_root: Path,
+	dataset_name: str,
+	training_iterations: int,
+) -> str:
+	python = os.environ.get("FASTGS_PYTHON", "python")
+	dataset_rel = f"./datasets/input/{dataset_name}"
+	model_rel = f"./output/{dataset_name}"
+	common = ["-s", dataset_rel, "-m", model_rel]
+	train_command = [
+		python,
+		"train.py",
+		*common,
+		"--iterations",
+		str(training_iterations),
+		"--eval",
+		"--densification_interval",
+		"500",
+		"--optimizer_type",
+		"default",
+		"--test_iterations",
+		str(training_iterations),
+		"--save_iterations",
+		str(training_iterations),
+		"--checkpoint_iterations",
+		str(training_iterations),
+		"--highfeature_lr",
+		"0.0015",
+		"--dense",
+		"0.003",
+		"--mult",
+		"0.7",
+	]
+	render_command = [python, "render.py", *common, "--skip_train"]
+	env = os.environ.copy()
+	env["CUDA_VISIBLE_DEVICES"] = env.get("CUDA_VISIBLE_DEVICES", "0")
+	env["OAR_JOB_ID"] = dataset_name
+
+	subprocess.run(train_command, cwd=fastgs_root, env=env, check=True)
+	subprocess.run(render_command, cwd=fastgs_root, env=env, check=True)
+	return shlex.join(train_command) + " && " + shlex.join(render_command)
+
+
 def prepare_fastgs_input_and_train(
 	colmap_output_dir: Path,
 	fastgs_root: Path,
@@ -158,14 +202,22 @@ def prepare_fastgs_input_and_train(
 	if colmap_output_dir.exists():
 		shutil.rmtree(colmap_output_dir)
 
-	wsl_command = _build_wsl_training_command(
-		fastgs_root=fastgs_root,
-		dataset_name=dataset_name,
-		training_iterations=training_iterations,
-	)
-
-	if run_training:
-		subprocess.run(["wsl", "bash", "-lc", wsl_command], check=True)
+	if os.name == "nt" and os.environ.get("FASTGS_NATIVE", "").lower() not in {"1", "true", "yes"}:
+		wsl_command = _build_wsl_training_command(
+			fastgs_root=fastgs_root,
+			dataset_name=dataset_name,
+			training_iterations=training_iterations,
+		)
+		if run_training:
+			subprocess.run(["wsl", "bash", "-lc", wsl_command], check=True)
+	else:
+		wsl_command = "native FastGS execution"
+		if run_training:
+			wsl_command = _run_native_training(
+				fastgs_root=fastgs_root,
+				dataset_name=dataset_name,
+				training_iterations=training_iterations,
+			)
 
 	return PipelineResult(
 		dataset_name=dataset_name,

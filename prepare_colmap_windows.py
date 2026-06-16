@@ -1,4 +1,5 @@
 import argparse
+import os
 import shutil
 import subprocess
 import struct
@@ -220,15 +221,18 @@ def run_colmap(
     database_path = distorted_dir / "database.db"
 
     distorted_sparse_dir.mkdir(parents=True, exist_ok=True)
+    use_gpu = os.environ.get("COLMAP_USE_GPU", "1").lower() not in {"0", "false", "no"}
 
-    run([
+    feature_extractor_cmd = [
         colmap_cmd,
         "feature_extractor",
         "--database_path", str(database_path),
         "--image_path", str(input_dir),
         "--ImageReader.single_camera", "1",
         "--ImageReader.camera_model", camera_model,
-    ])
+        "--SiftExtraction.use_gpu", "1" if use_gpu else "0",
+    ]
+    run(feature_extractor_cmd)
 
     if matcher == "sequential":
         run([
@@ -237,12 +241,14 @@ def run_colmap(
             "--database_path", str(database_path),
             "--SequentialMatching.overlap", "30",
             "--SequentialMatching.quadratic_overlap", "1",
+            "--SiftMatching.use_gpu", "1" if use_gpu else "0",
         ])
     else:
         run([
             colmap_cmd,
             "exhaustive_matcher",
             "--database_path", str(database_path),
+            "--SiftMatching.use_gpu", "1" if use_gpu else "0",
         ])
 
     run([

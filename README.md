@@ -2,7 +2,12 @@
 
 Reminiscence turns an ordinary phone video into an explorable 3D memory: capture a scene on iPhone, reconstruct it into a Gaussian splat, import it into Unity, and walk through it in VR on a Meta Quest/Oculus headset. The cool part is that a flat clip becomes a spatial asset you can revisit, place in a scene, and experience at human scale.
 
-Technically, the project connects a Swift capture app, a FastAPI backend, COLMAP, FastGS, and Unity/OpenXR into one local reconstruction pipeline.
+Technically, the deployable app connects a React frontend, a FastAPI backend,
+COLMAP, FastGS, and Unity/OpenXR. The older Swift capture prototype remains in
+`swift-app/`.
+
+For a Vercel frontend and on-demand Modal GPU deployment, see
+[`DEPLOY.md`](DEPLOY.md).
 
 ## End-to-end pipeline
 
