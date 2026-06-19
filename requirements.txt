@@ -1,0 +1,13 @@
+# Runtime dependencies for the local FastAPI backend.
+#
+# FastGS itself is intentionally managed through fastgs/environment.yml because
+# it depends on CUDA-specific PyTorch builds and local CUDA extension submodules.
+# External tools such as COLMAP, FFmpeg, Unity, and WSL are installed separately.
+
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Optional: backend/test_rendering_pipeline_safe.py uses Pillow to create a
+# mock JPEG when available, then falls back to a tiny JPEG stub if it is absent.
+Pillow

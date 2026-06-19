@@ -1,0 +1,5 @@
+# ninja log v5
+4	7944	1777481749252700700	/mnt/c/Users/login/fgs/fastgs/submodules/simple-knn/build/temp.linux-x86_64-cpython-37/simple_knn.o	cacffeaefbd46b57
+10	9229	1777482176664480600	/mnt/c/Users/login/fgs/fastgs/submodules/simple-knn/build/temp.linux-x86_64-cpython-37/simple_knn.o	bd6243f1ab58568d
+9	13114	1777482180515778300	/mnt/c/Users/login/fgs/fastgs/submodules/simple-knn/build/temp.linux-x86_64-cpython-37/ext.o	e60a1ff7de86b95e
+10	46188	1777482213699226700	/mnt/c/Users/login/fgs/fastgs/submodules/simple-knn/build/temp.linux-x86_64-cpython-37/spatial.o	a5225ba1a267cbff

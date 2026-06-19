@@ -1,0 +1,41 @@
+name: Build GPU image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/gpu-image.yml"
+      - "backend/**"
+      - "fastgs/**"
+      - "Dockerfile"
+      - "prepare_colmap_windows.py"
+      - "requirements.txt"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:gpu-latest
+            ghcr.io/${{ github.repository }}:gpu-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
