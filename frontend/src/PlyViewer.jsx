@@ -6,11 +6,11 @@ const DEFAULT_VIEW = {
   pitch: -0.18,
   distance: 1.75,
   panX: 0,
-  panY: 0.04,
+  panY: -0.04,
 };
-const SPLAT_SCALE_BOOST = 0.95;
-const MIN_SPLAT_RADIUS = 0.007;
-const MAX_SPLAT_RADIUS = 0.14;
+const SPLAT_SCALE_BOOST = 0.62;
+const MIN_SPLAT_RADIUS = 0.004;
+const MAX_SPLAT_RADIUS = 0.08;
 const VERTEX_FLOATS = 11;
 const SPLAT_CORNERS = [
   [-1, -1],
@@ -241,7 +241,7 @@ function normalizeSplats(rawPositions, colors, opacities, rawScales, vertexCount
   }
 
   const focusRadius = percentile(focusRadii, 0.82);
-  const fitDistance = clamp(focusRadius * 1.65, 1.25, 2.6);
+  const fitDistance = clamp(focusRadius * 2.15, 1.55, 3.35);
 
   return {
     positions,
@@ -632,6 +632,7 @@ function createRenderer(canvas, pointCloud) {
 
 export default function PlyViewer({ src }) {
   const canvasRef = useRef(null);
+  const canvasWrapRef = useRef(null);
   const rendererRef = useRef(null);
   const dragRef = useRef(null);
   const [pointCloud, setPointCloud] = useState(null);
@@ -706,6 +707,18 @@ export default function PlyViewer({ src }) {
     rendererRef.current?.draw(view);
   }, [view]);
 
+  useEffect(() => {
+    const canvasWrap = canvasWrapRef.current;
+    if (!canvasWrap) return undefined;
+
+    const handleWheel = (event) => zoom(event);
+    canvasWrap.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      canvasWrap.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+
   function startDrag(event) {
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = {
@@ -746,6 +759,7 @@ export default function PlyViewer({ src }) {
 
   function zoom(event) {
     event.preventDefault();
+    event.stopPropagation();
     setView((current) => ({
       ...current,
       distance: clamp(current.distance * Math.exp(event.deltaY * 0.001), 0.5, 8),
@@ -759,12 +773,12 @@ export default function PlyViewer({ src }) {
   return (
     <div className="viewer-card">
       <div
+        ref={canvasWrapRef}
         className="viewer-canvas-wrap"
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        onWheel={zoom}
         onDoubleClick={resetView}
       >
         <canvas ref={canvasRef} aria-label="3D Gaussian splat viewer" />

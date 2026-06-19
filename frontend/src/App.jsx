@@ -8,6 +8,46 @@ function apiUrl(path) {
   return `${apiBaseUrl}${path}`;
 }
 
+function MomentComparison({ previewSrc, sourceSrc }) {
+  const [previewAvailable, setPreviewAvailable] = useState(Boolean(previewSrc));
+  const [sourceAvailable, setSourceAvailable] = useState(Boolean(sourceSrc));
+
+  useEffect(() => {
+    setPreviewAvailable(Boolean(previewSrc));
+    setSourceAvailable(Boolean(sourceSrc));
+  }, [previewSrc, sourceSrc]);
+
+  if (!previewAvailable && !sourceAvailable) return null;
+
+  return (
+    <div className="comparison-grid">
+      {previewAvailable && (
+        <article className="media-card">
+          <p className="eyebrow">MODEL RENDER</p>
+          <img
+            src={previewSrc}
+            alt="Rendered preview from the reconstructed Gaussian splat"
+            onError={() => setPreviewAvailable(false)}
+          />
+        </article>
+      )}
+      {sourceAvailable && (
+        <article className="media-card">
+          <p className="eyebrow">ORIGINAL CLIP</p>
+          <video
+            src={sourceSrc}
+            controls
+            muted
+            loop
+            playsInline
+            onError={() => setSourceAvailable(false)}
+          />
+        </article>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [file, setFile] = useState(null);
   const [job, setJob] = useState(() => {
@@ -92,6 +132,10 @@ export default function App() {
   }
 
   const splatUrl = job?.id ? apiUrl(`/api/v1/moments/${job.id}/splat`) : "";
+  const sourceUrl = job?.id ? apiUrl(`/api/v1/moments/${job.id}/source`) : "";
+  const renderPreviewUrl = job?.render_preview_url
+    ? apiUrl(`/api/v1/moments/${job.id}/preview`)
+    : "";
 
   return (
     <main>
@@ -143,7 +187,12 @@ export default function App() {
         <section className="viewer-panel">
           <div className="viewer-heading">
             <p className="eyebrow">MEMORY PREVIEW</p>
-            <h2>Explore it in the browser</h2>
+            <h2>Compare it to the source</h2>
+          </div>
+          <MomentComparison previewSrc={renderPreviewUrl} sourceSrc={sourceUrl} />
+          <div className="viewer-heading compact">
+            <p className="eyebrow">INTERACTIVE VIEW</p>
+            <h2>Explore the Gaussian splat</h2>
           </div>
           <PlyViewer src={splatUrl} />
         </section>

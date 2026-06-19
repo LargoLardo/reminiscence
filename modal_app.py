@@ -80,8 +80,27 @@ def _public_result(call_id: str, result: dict) -> dict:
     return {
         key: value
         for key, value in {**result, "id": call_id}.items()
-        if key not in {"splat_path"}
+        if key not in {
+            "splat_path",
+            "source_video_path",
+            "render_preview_path",
+            "source_content_type",
+            "source_filename",
+        }
     }
+
+
+def _copy_middle_render(render_dir: Path, destination: Path) -> bool:
+    if not render_dir.is_dir():
+        return False
+
+    renders = sorted(render_dir.glob("*.png"))
+    if not renders:
+        return False
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(renders[len(renders) // 2], destination)
+    return True
 
 
 @app.function(
@@ -94,7 +113,13 @@ def _public_result(call_id: str, result: dict) -> dict:
     cpu=GPU_CPU_CORES,
     memory=GPU_MEMORY_MIB,
 )
-def reconstruct(upload_id: str, captured_at: str, duration: str) -> dict:
+def reconstruct(
+    upload_id: str,
+    captured_at: str,
+    duration: str,
+    source_filename: str = "source.mp4",
+    source_content_type: str = "video/mp4",
+) -> dict:
     from backend.rendering_pipeline import prepare_fastgs_input_and_train
     from backend.unity_splat_transfer import find_fastgs_point_cloud
 
@@ -139,7 +164,12 @@ def reconstruct(upload_id: str, captured_at: str, duration: str) -> dict:
             iteration=TRAINING_ITERATIONS,
         )
         splat_path = job_dir / "memory.ply"
+        render_preview_path = job_dir / "render_preview.png"
         shutil.copy2(source_ply, splat_path)
+        has_render_preview = _copy_middle_render(
+            Path(pipeline_result.render_path),
+            render_preview_path,
+        )
         video_size = video_path.stat().st_size
         data_volume.commit()
 
@@ -151,6 +181,12 @@ def reconstruct(upload_id: str, captured_at: str, duration: str) -> dict:
             "dataset_name": upload_id,
             "registered_image_count": pipeline_result.registered_image_count,
             "splat_download_url": "",
+            "source_video_url": "",
+            "render_preview_url": "" if has_render_preview else None,
+            "source_video_path": str(video_path),
+            "source_filename": source_filename,
+            "source_content_type": source_content_type,
+            "render_preview_path": str(render_preview_path) if has_render_preview else "",
             "splat_path": str(splat_path),
         }
     finally:
@@ -247,7 +283,13 @@ def web():
                     destination.write(chunk)
 
             await data_volume.commit.aio()
-            call = await reconstruct.spawn.aio(upload_id, captured_at, str(duration_seconds))
+            call = await reconstruct.spawn.aio(
+                upload_id,
+                captured_at,
+                str(duration_seconds),
+                Path(video.filename or "source.mp4").name,
+                video.content_type or "video/mp4",
+            )
             return {"id": call.object_id, "status": "queued"}
         except Exception:
             shutil.rmtree(job_dir, ignore_errors=True)
@@ -262,7 +304,48 @@ def web():
         public_result = _public_result(call_id, result)
         if public_result.get("status") == "complete":
             public_result["splat_download_url"] = f"/api/v1/moments/{call_id}/splat"
+            public_result["source_video_url"] = f"/api/v1/moments/{call_id}/source"
+            if public_result.get("render_preview_url") is not None:
+                public_result["render_preview_url"] = f"/api/v1/moments/{call_id}/preview"
         return public_result
+
+    @web_app.get("/api/v1/moments/{call_id}/source")
+    async def download_source(call_id: str):
+        result = await poll_result(call_id)
+        if result is None:
+            raise HTTPException(status_code=409, detail="Moment is processing")
+        if result.get("status") != "complete":
+            raise HTTPException(status_code=409, detail=f"Moment is {result.get('status')}")
+
+        data_volume.reload()
+        source_video_path = Path(result.get("source_video_path") or Path(result["splat_path"]).parent / "input.mp4")
+        if not source_video_path.is_file():
+            raise HTTPException(status_code=404, detail="Source video has expired")
+        return FileResponse(
+            source_video_path,
+            filename=result.get("source_filename") or f"{result['dataset_name']}.mp4",
+            media_type=result.get("source_content_type") or "video/mp4",
+            content_disposition_type="inline",
+        )
+
+    @web_app.get("/api/v1/moments/{call_id}/preview")
+    async def download_render_preview(call_id: str):
+        result = await poll_result(call_id)
+        if result is None:
+            raise HTTPException(status_code=409, detail="Moment is processing")
+        if result.get("status") != "complete":
+            raise HTTPException(status_code=409, detail=f"Moment is {result.get('status')}")
+
+        data_volume.reload()
+        render_preview_path = Path(result.get("render_preview_path") or "")
+        if not render_preview_path.is_file():
+            raise HTTPException(status_code=404, detail="Render preview is unavailable")
+        return FileResponse(
+            render_preview_path,
+            filename=f"{result['dataset_name']}_preview.png",
+            media_type="image/png",
+            content_disposition_type="inline",
+        )
 
     @web_app.get("/api/v1/moments/{call_id}/splat")
     async def download_splat(call_id: str):
