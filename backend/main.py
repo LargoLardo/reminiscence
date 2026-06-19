@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import sys
 import threading
 import uuid
 from pathlib import Path
@@ -14,14 +13,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
-    from .rendering_pipeline import prepare_fastgs_input_and_train
+    from .rendering_pipeline import prepare_fastgs_input_and_train, run_colmap_reconstruction
     from .unity_splat_transfer import (
         DEFAULT_UNITY_PROJECT,
         find_fastgs_point_cloud,
         transfer_fastgs_model_to_unity,
     )
 except ImportError:
-    from rendering_pipeline import prepare_fastgs_input_and_train
+    from rendering_pipeline import prepare_fastgs_input_and_train, run_colmap_reconstruction
     from unity_splat_transfer import (
         DEFAULT_UNITY_PROJECT,
         find_fastgs_point_cloud,
@@ -59,6 +58,7 @@ UNITY_IMPORT = os.environ.get("REMINISCENCE_UNITY_IMPORT", str(os.name == "nt"))
 }
 API_KEY = os.environ.get("REMINISCENCE_API_KEY", "")
 TRAINING_ITERATIONS = int(os.environ.get("REMINISCENCE_TRAINING_ITERATIONS", "5000"))
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 JOBS: dict[str, dict] = {}
 PIPELINE_LOCK = threading.Lock()
 
@@ -71,25 +71,39 @@ def require_api_key(x_api_key: str | None) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 
 
+def set_job(moment_id: str, status: str, **values) -> dict:
+    JOBS[moment_id] = {"id": moment_id, "status": status, **values}
+    return JOBS[moment_id]
+
+
+def parse_duration(duration: str) -> float:
+    try:
+        return float(duration)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Duration must be a number") from exc
+
+
+def job_or_404(moment_id: str) -> dict:
+    if moment_id not in JOBS:
+        raise HTTPException(status_code=404, detail="Moment not found")
+    return JOBS[moment_id]
+
+
+def complete_job_or_409(moment_id: str) -> dict:
+    job = job_or_404(moment_id)
+    if job.get("status") != "complete":
+        raise HTTPException(status_code=409, detail=f"Moment is {job.get('status')}")
+    return job
+
+
 def process_moment(moment_id: str, file_path: Path, captured_at: str, duration: str) -> dict:
-    JOBS[moment_id] = {"id": moment_id, "status": "processing"}
+    duration_seconds = parse_duration(duration)
+    set_job(moment_id, "processing")
     colmap_output_dir = COLMAP_OUTPUT_ROOT / moment_id
 
     try:
         with PIPELINE_LOCK:
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(PREPARE_COLMAP_SCRIPT),
-                    str(file_path),
-                    str(colmap_output_dir),
-                    "--fps",
-                    "5",
-                    "--overwrite",
-                    "--export-ply",
-                ],
-                check=True,
-            )
+            run_colmap_reconstruction(file_path, colmap_output_dir, PREPARE_COLMAP_SCRIPT)
             pipeline_result = prepare_fastgs_input_and_train(
                 colmap_output_dir=colmap_output_dir,
                 fastgs_root=PROJECT_ROOT / "fastgs",
@@ -97,11 +111,9 @@ def process_moment(moment_id: str, file_path: Path, captured_at: str, duration: 
                 training_iterations=TRAINING_ITERATIONS,
             )
 
-            result = {
-                "id": moment_id,
-                "status": "complete",
+            values = {
                 "captured_at": captured_at,
-                "duration_seconds": float(duration),
+                "duration_seconds": duration_seconds,
                 "size_bytes": file_path.stat().st_size,
                 "dataset_name": pipeline_result.dataset_name,
                 "dataset_path": pipeline_result.dataset_path,
@@ -117,7 +129,7 @@ def process_moment(moment_id: str, file_path: Path, captured_at: str, duration: 
                     unity_project=UNITY_PROJECT_DIR,
                     convert=True,
                 )
-                result.update(
+                values.update(
                     {
                         "unity_ply_path": unity_result.copied_ply,
                         "unity_asset_path": unity_result.unity_asset_path,
@@ -128,10 +140,9 @@ def process_moment(moment_id: str, file_path: Path, captured_at: str, duration: 
                     }
                 )
 
-        JOBS[moment_id] = result
-        return result
+        return set_job(moment_id, "complete", **values)
     except Exception as exc:
-        JOBS[moment_id] = {"id": moment_id, "status": "failed", "error": str(exc)}
+        set_job(moment_id, "failed", error=str(exc))
         raise
 
 
@@ -157,15 +168,16 @@ async def create_moment(
     x_api_key: str | None = Header(default=None),
 ):
     require_api_key(x_api_key)
+    parse_duration(duration)
     moment_id = str(uuid.uuid4())
     file_path = UPLOAD_DIR / f"{moment_id}.mp4"
 
     with file_path.open("wb") as destination:
-        while chunk := await video.read(1024 * 1024):
+        while chunk := await video.read(UPLOAD_CHUNK_BYTES):
             destination.write(chunk)
 
     if ASYNC_JOBS:
-        JOBS[moment_id] = {"id": moment_id, "status": "queued"}
+        set_job(moment_id, "queued")
         background_tasks.add_task(process_moment_background, moment_id, file_path, captured_at, duration)
         return JOBS[moment_id]
 
@@ -180,20 +192,13 @@ async def create_moment(
 @app.get("/api/v1/moments/{moment_id}")
 def get_moment(moment_id: str, x_api_key: str | None = Header(default=None)):
     require_api_key(x_api_key)
-    if moment_id not in JOBS:
-        raise HTTPException(status_code=404, detail="Moment not found")
-    return JOBS[moment_id]
+    return job_or_404(moment_id)
 
 
 @app.get("/api/v1/moments/{moment_id}/splat")
 def download_splat(moment_id: str, x_api_key: str | None = Header(default=None)):
     require_api_key(x_api_key)
-    job = JOBS.get(moment_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Moment not found")
-    if job.get("status") != "complete":
-        raise HTTPException(status_code=409, detail=f"Moment is {job.get('status')}")
-
+    job = complete_job_or_409(moment_id)
     ply_path = find_fastgs_point_cloud(Path(job["model_path"]), iteration=TRAINING_ITERATIONS)
     return FileResponse(ply_path, filename=f"{job['dataset_name']}.ply", media_type="application/octet-stream")
 

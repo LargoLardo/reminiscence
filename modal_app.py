@@ -1,7 +1,5 @@
 import os
 import shutil
-import subprocess
-import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -23,6 +21,7 @@ MONTHLY_JOB_LIMIT = 30
 TRAINING_ITERATIONS = 30000
 JOB_TIMEOUT_SECONDS = 20 * 60
 RETENTION_DAYS = 7
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 GPU_CPU_CORES = 4.0
 GPU_MEMORY_MIB = 32 * 1024
 WEB_CPU_CORES = 0.125
@@ -38,6 +37,17 @@ CPU_CORE_USD_PER_SECOND = 0.0000131
 MEMORY_GIB_USD_PER_SECOND = 0.00000222
 LONGEST_MONTH_SECONDS = 31 * 24 * 60 * 60
 CLEANUP_MAX_SECONDS_PER_MONTH = 31 * 10 * 60
+PRIVATE_RESULT_KEYS = {
+    "splat_path",
+    "source_video_path",
+    "render_preview_path",
+    "source_content_type",
+    "source_filename",
+}
+PIPELINE_PROGRESS_RANGES = {
+    "training": (0.42, 0.86, "Training Gaussian splat"),
+    "rendering": (0.86, 0.93, "Rendering preview"),
+}
 
 
 def estimated_max_monthly_compute_usd() -> float:
@@ -56,6 +66,10 @@ def estimated_max_monthly_compute_usd() -> float:
         + (WEB_MEMORY_MIB / 1024) * MEMORY_GIB_USD_PER_SECOND
     )
     return round(gpu_worker + public_api + cleanup, 2)
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
 
 
 ESTIMATED_MAX_MONTHLY_COMPUTE_USD = estimated_max_monthly_compute_usd()
@@ -90,13 +104,7 @@ def _public_result(call_id: str, result: dict) -> dict:
     return {
         key: value
         for key, value in {**result, "id": call_id}.items()
-        if key not in {
-            "splat_path",
-            "source_video_path",
-            "render_preview_path",
-            "source_content_type",
-            "source_filename",
-        }
+        if key not in PRIVATE_RESULT_KEYS
     }
 
 
@@ -132,11 +140,31 @@ def _set_progress(upload_id: str, progress: float, stage_label: str, status: str
             **current,
             "upload_id": upload_id,
             "status": status,
-            "progress": max(0.0, min(1.0, progress)),
+            "progress": _clamp01(progress),
             "stage_label": stage_label,
             "updated_at": time.time(),
         },
     )
+
+
+def _progress_callback_for(upload_id: str):
+    last_update: dict[str, tuple[float, float]] = {}
+
+    def update(stage: str, current: int, total: int) -> None:
+        if total <= 0 or stage not in PIPELINE_PROGRESS_RANGES:
+            return
+
+        fraction = _clamp01(current / total)
+        now = time.time()
+        last_fraction, last_updated_at = last_update.get(stage, (-1.0, 0.0))
+        if current != total and fraction < last_fraction + 0.005 and now - last_updated_at < 2.5:
+            return
+
+        start, end, label = PIPELINE_PROGRESS_RANGES[stage]
+        last_update[stage] = (fraction, now)
+        _set_progress(upload_id, start + fraction * (end - start), f"{label} ({current:,}/{total:,})")
+
+    return update
 
 
 @app.function(
@@ -156,7 +184,7 @@ def reconstruct(
     source_filename: str = "source.mp4",
     source_content_type: str = "video/mp4",
 ) -> dict:
-    from backend.rendering_pipeline import prepare_fastgs_input_and_train
+    from backend.rendering_pipeline import prepare_fastgs_input_and_train, run_colmap_reconstruction
     from backend.unity_splat_transfer import find_fastgs_point_cloud
 
     data_volume.reload()
@@ -171,58 +199,17 @@ def reconstruct(
         _set_progress(upload_id, 1.0, "Uploaded video is missing", status="failed")
         raise FileNotFoundError(f"Uploaded video is missing: {video_path}")
 
-    last_pipeline_update: dict[str, tuple[float, float]] = {}
-
-    def update_pipeline_progress(stage: str, current: int, total: int) -> None:
-        if total <= 0:
-            return
-        fraction = max(0.0, min(1.0, current / total))
-        now = time.time()
-        last_fraction, last_updated_at = last_pipeline_update.get(stage, (-1.0, 0.0))
-        if current != total and fraction < last_fraction + 0.005 and now - last_updated_at < 2.5:
-            return
-
-        last_pipeline_update[stage] = (fraction, now)
-        if stage == "training":
-            _set_progress(
-                upload_id,
-                0.42 + fraction * 0.44,
-                f"Training Gaussian splat ({current:,}/{total:,})",
-            )
-        elif stage == "rendering":
-            _set_progress(
-                upload_id,
-                0.86 + fraction * 0.07,
-                f"Rendering preview ({current:,}/{total:,})",
-            )
-
     try:
         _set_progress(upload_id, 0.10, "Preparing video frames")
-        colmap_env = os.environ.copy()
-        colmap_env["COLMAP_USE_GPU"] = "0"
-        colmap_env["QT_QPA_PLATFORM"] = "offscreen"
         _set_progress(upload_id, 0.18, "Running COLMAP reconstruction")
-        subprocess.run(
-            [
-                sys.executable,
-                str(project_root / "prepare_colmap_windows.py"),
-                str(video_path),
-                str(colmap_output_dir),
-                "--fps",
-                "5",
-                "--overwrite",
-                "--export-ply",
-            ],
-            check=True,
-            env=colmap_env,
-        )
+        run_colmap_reconstruction(video_path, colmap_output_dir, project_root / "prepare_colmap_windows.py")
         _set_progress(upload_id, 0.42, "Training Gaussian splat")
         pipeline_result = prepare_fastgs_input_and_train(
             colmap_output_dir=colmap_output_dir,
             fastgs_root=project_root / "fastgs",
             run_training=True,
             training_iterations=TRAINING_ITERATIONS,
-            progress_callback=update_pipeline_progress,
+            progress_callback=_progress_callback_for(upload_id),
         )
 
         _set_progress(upload_id, 0.94, "Exporting splat")
@@ -314,6 +301,20 @@ def web():
             return {}
         return {**mapping, **state, "id": call_id}
 
+    async def complete_result(call_id: str) -> dict:
+        result = await poll_result(call_id)
+        if result is None:
+            raise HTTPException(status_code=409, detail="Moment is processing")
+        if result.get("status") != "complete":
+            raise HTTPException(status_code=409, detail=f"Moment is {result.get('status')}")
+        await data_volume.reload.aio()
+        return result
+
+    def require_result_file(path: Path, missing_detail: str) -> Path:
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=missing_detail)
+        return path
+
     @web_app.get("/api/health")
     async def health():
         return {
@@ -357,7 +358,7 @@ def web():
 
         try:
             with video_path.open("wb") as destination:
-                while chunk := await video.read(1024 * 1024):
+                while chunk := await video.read(UPLOAD_CHUNK_BYTES):
                     uploaded_bytes += len(chunk)
                     if uploaded_bytes > MAX_UPLOAD_BYTES:
                         raise HTTPException(
@@ -423,18 +424,10 @@ def web():
 
     @web_app.get("/api/v1/moments/{call_id}/source")
     async def download_source(call_id: str):
-        result = await poll_result(call_id)
-        if result is None:
-            raise HTTPException(status_code=409, detail="Moment is processing")
-        if result.get("status") != "complete":
-            raise HTTPException(status_code=409, detail=f"Moment is {result.get('status')}")
-
-        await data_volume.reload.aio()
+        result = await complete_result(call_id)
         source_video_path = Path(result.get("source_video_path") or Path(result["splat_path"]).parent / "input.mp4")
-        if not source_video_path.is_file():
-            raise HTTPException(status_code=404, detail="Source video has expired")
         return FileResponse(
-            source_video_path,
+            require_result_file(source_video_path, "Source video has expired"),
             filename=result.get("source_filename") or f"{result['dataset_name']}.mp4",
             media_type=result.get("source_content_type") or "video/mp4",
             content_disposition_type="inline",
@@ -442,18 +435,10 @@ def web():
 
     @web_app.get("/api/v1/moments/{call_id}/preview")
     async def download_render_preview(call_id: str):
-        result = await poll_result(call_id)
-        if result is None:
-            raise HTTPException(status_code=409, detail="Moment is processing")
-        if result.get("status") != "complete":
-            raise HTTPException(status_code=409, detail=f"Moment is {result.get('status')}")
-
-        await data_volume.reload.aio()
+        result = await complete_result(call_id)
         render_preview_path = Path(result.get("render_preview_path") or "")
-        if not render_preview_path.is_file():
-            raise HTTPException(status_code=404, detail="Render preview is unavailable")
         return FileResponse(
-            render_preview_path,
+            require_result_file(render_preview_path, "Render preview is unavailable"),
             filename=f"{result['dataset_name']}_preview.png",
             media_type="image/png",
             content_disposition_type="inline",
@@ -461,18 +446,9 @@ def web():
 
     @web_app.get("/api/v1/moments/{call_id}/splat")
     async def download_splat(call_id: str):
-        result = await poll_result(call_id)
-        if result is None:
-            raise HTTPException(status_code=409, detail="Moment is processing")
-        if result.get("status") != "complete":
-            raise HTTPException(status_code=409, detail=f"Moment is {result.get('status')}")
-
-        await data_volume.reload.aio()
-        splat_path = Path(result["splat_path"])
-        if not splat_path.is_file():
-            raise HTTPException(status_code=404, detail="Splat file has expired")
+        result = await complete_result(call_id)
         return FileResponse(
-            splat_path,
+            require_result_file(Path(result["splat_path"]), "Splat file has expired"),
             filename=f"{result['dataset_name']}.ply",
             media_type="application/octet-stream",
         )

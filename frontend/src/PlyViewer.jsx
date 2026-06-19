@@ -16,6 +16,14 @@ const CORNERS = [
   [1, 1],
   [-1, 1],
 ];
+const ATTRIBUTES = [
+  ["center", 3, 0],
+  ["color", 3, 3],
+  ["opacity", 1, 6],
+  ["axis1", 2, 7],
+  ["axis2", 2, 9],
+  ["corner", 2, 11],
+];
 const TYPE_SIZES = {
   char: 1,
   int8: 1,
@@ -242,7 +250,8 @@ function normalizeCloud(rawPositions, colors, opacities, rawScales, rawRotations
   };
 }
 
-function readVertex(values, vertex, rawPositions, colors, opacities, rawScales, rawRotations) {
+function readVertex(values, vertex, rawCloud) {
+  const { rawPositions, colors, opacities, rawScales, rawRotations } = rawCloud;
   const pointIndex = vertex * 3;
   rawPositions[pointIndex] = values.x ?? 0;
   rawPositions[pointIndex + 1] = values.y ?? 0;
@@ -252,6 +261,27 @@ function readVertex(values, vertex, rawPositions, colors, opacities, rawScales, 
   opacities[vertex] = values.opacity == null ? 0.86 : clamp(sigmoid(values.opacity), 0.02, 0.98);
   rawScales.set(scaleFrom(values), pointIndex);
   rawRotations.set(rotationFrom(values), vertex * 4);
+}
+
+function createRawCloud(vertexCount) {
+  return {
+    rawPositions: new Float32Array(vertexCount * 3),
+    colors: new Float32Array(vertexCount * 3),
+    opacities: new Float32Array(vertexCount),
+    rawScales: new Float32Array(vertexCount * 3),
+    rawRotations: new Float32Array(vertexCount * 4),
+  };
+}
+
+function normalizeRawCloud(rawCloud, vertexCount) {
+  return normalizeCloud(
+    rawCloud.rawPositions,
+    rawCloud.colors,
+    rawCloud.opacities,
+    rawCloud.rawScales,
+    rawCloud.rawRotations,
+    vertexCount,
+  );
 }
 
 function parseBinaryPly(buffer, dataOffset, vertexCount, properties, littleEndian) {
@@ -268,11 +298,7 @@ function parseBinaryPly(buffer, dataOffset, vertexCount, properties, littleEndia
     throw new Error("PLY file ended before all vertices could be read");
   }
 
-  const rawPositions = new Float32Array(vertexCount * 3);
-  const colors = new Float32Array(vertexCount * 3);
-  const opacities = new Float32Array(vertexCount);
-  const rawScales = new Float32Array(vertexCount * 3);
-  const rawRotations = new Float32Array(vertexCount * 4);
+  const rawCloud = createRawCloud(vertexCount);
 
   for (let vertex = 0; vertex < vertexCount; vertex += 1) {
     const base = dataOffset + vertex * stride;
@@ -280,19 +306,15 @@ function parseBinaryPly(buffer, dataOffset, vertexCount, properties, littleEndia
     for (const property of layout) {
       values[property.name] = readValue(view, base + property.offset, property.type, littleEndian);
     }
-    readVertex(values, vertex, rawPositions, colors, opacities, rawScales, rawRotations);
+    readVertex(values, vertex, rawCloud);
   }
 
-  return normalizeCloud(rawPositions, colors, opacities, rawScales, rawRotations, vertexCount);
+  return normalizeRawCloud(rawCloud, vertexCount);
 }
 
 function parseAsciiPly(bytes, dataOffset, vertexCount, properties) {
   const lines = new TextDecoder("ascii").decode(bytes.slice(dataOffset)).split(/\r?\n/);
-  const rawPositions = new Float32Array(vertexCount * 3);
-  const colors = new Float32Array(vertexCount * 3);
-  const opacities = new Float32Array(vertexCount);
-  const rawScales = new Float32Array(vertexCount * 3);
-  const rawRotations = new Float32Array(vertexCount * 4);
+  const rawCloud = createRawCloud(vertexCount);
 
   for (let vertex = 0; vertex < vertexCount; vertex += 1) {
     const parts = (lines[vertex] || "").trim().split(/\s+/).map(Number);
@@ -300,10 +322,10 @@ function parseAsciiPly(bytes, dataOffset, vertexCount, properties) {
     properties.forEach((property, index) => {
       values[property.name] = parts[index];
     });
-    readVertex(values, vertex, rawPositions, colors, opacities, rawScales, rawRotations);
+    readVertex(values, vertex, rawCloud);
   }
 
-  return normalizeCloud(rawPositions, colors, opacities, rawScales, rawRotations, vertexCount);
+  return normalizeRawCloud(rawCloud, vertexCount);
 }
 
 function parsePly(buffer) {
@@ -388,6 +410,14 @@ function createProgram(gl) {
     throw new Error(message || "Could not link WebGL program");
   }
   return program;
+}
+
+function bindAttributes(gl, locations) {
+  const stride = VERTEX_FLOATS * 4;
+  for (const [name, size, offset] of ATTRIBUTES) {
+    gl.enableVertexAttribArray(locations[name]);
+    gl.vertexAttribPointer(locations[name], size, gl.FLOAT, false, stride, offset * 4);
+  }
 }
 
 function rotatePoint(position, view) {
@@ -564,19 +594,7 @@ function createRenderer(canvas, pointCloud, mode) {
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, vertexData.subarray(0, offset), gl.DYNAMIC_DRAW);
 
-    const stride = VERTEX_FLOATS * 4;
-    gl.enableVertexAttribArray(locations.center);
-    gl.vertexAttribPointer(locations.center, 3, gl.FLOAT, false, stride, 0);
-    gl.enableVertexAttribArray(locations.color);
-    gl.vertexAttribPointer(locations.color, 3, gl.FLOAT, false, stride, 3 * 4);
-    gl.enableVertexAttribArray(locations.opacity);
-    gl.vertexAttribPointer(locations.opacity, 1, gl.FLOAT, false, stride, 6 * 4);
-    gl.enableVertexAttribArray(locations.axis1);
-    gl.vertexAttribPointer(locations.axis1, 2, gl.FLOAT, false, stride, 7 * 4);
-    gl.enableVertexAttribArray(locations.axis2);
-    gl.vertexAttribPointer(locations.axis2, 2, gl.FLOAT, false, stride, 9 * 4);
-    gl.enableVertexAttribArray(locations.corner);
-    gl.vertexAttribPointer(locations.corner, 2, gl.FLOAT, false, stride, 11 * 4);
+    bindAttributes(gl, locations);
     gl.drawArrays(gl.TRIANGLES, 0, rendered);
   }
 
@@ -613,6 +631,7 @@ export default function PlyViewer({ src }) {
   const fullscreenShellRef = useRef(null);
   const renderersRef = useRef([]);
   const fullscreenRendererRef = useRef(null);
+  const viewRef = useRef(DEFAULT_VIEW);
   const dragRef = useRef(null);
   const keysRef = useRef(new Set());
   const [pointCloud, setPointCloud] = useState(null);
@@ -620,6 +639,10 @@ export default function PlyViewer({ src }) {
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -664,7 +687,7 @@ export default function PlyViewer({ src }) {
         createRenderer(gaussianCanvasRef.current, pointCloud, "gaussian"),
       ];
       const observers = [pointCanvasRef.current, gaussianCanvasRef.current].map((canvas, index) => {
-        const observer = new ResizeObserver(() => renderers[index].draw(view));
+        const observer = new ResizeObserver(() => renderers[index].draw(viewRef.current));
         observer.observe(canvas);
         return observer;
       });
@@ -691,7 +714,7 @@ export default function PlyViewer({ src }) {
     if (!fullscreen || !pointCloud || !fullscreenCanvasRef.current) return undefined;
 
     const renderer = createRenderer(fullscreenCanvasRef.current, pointCloud, "gaussian");
-    const observer = new ResizeObserver(() => renderer.draw(view));
+    const observer = new ResizeObserver(() => renderer.draw(viewRef.current));
     observer.observe(fullscreenCanvasRef.current);
     renderer.draw(view);
     fullscreenRendererRef.current = renderer;
@@ -777,6 +800,11 @@ export default function PlyViewer({ src }) {
   }, [fullscreen]);
 
   function bindPointerHandlers() {
+    function endDrag(event) {
+      if (dragRef.current) event.currentTarget.releasePointerCapture(event.pointerId);
+      dragRef.current = null;
+    }
+
     return {
       onPointerDown(event) {
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -799,14 +827,8 @@ export default function PlyViewer({ src }) {
           setView({ ...drag.view, yaw: drag.view.yaw + dx * 0.008, pitch: clamp(drag.view.pitch + dy * 0.008, -1.45, 1.45) });
         }
       },
-      onPointerUp(event) {
-        if (dragRef.current) event.currentTarget.releasePointerCapture(event.pointerId);
-        dragRef.current = null;
-      },
-      onPointerCancel(event) {
-        if (dragRef.current) event.currentTarget.releasePointerCapture(event.pointerId);
-        dragRef.current = null;
-      },
+      onPointerUp: endDrag,
+      onPointerCancel: endDrag,
       onDoubleClick() {
         setView(createInitialView(pointCloud));
       },

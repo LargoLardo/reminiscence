@@ -8,6 +8,16 @@ function apiUrl(path) {
   return `${apiBaseUrl}${path}`;
 }
 
+async function readJson(response, fallbackMessage) {
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || fallbackMessage);
+  return body;
+}
+
+async function fetchJson(path, options, fallbackMessage) {
+  return readJson(await fetch(apiUrl(path), options), fallbackMessage);
+}
+
 function clampProgress(value) {
   return Math.min(Math.max(Number(value) || 0, 0), 1);
 }
@@ -98,10 +108,11 @@ export default function App() {
 
     async function poll() {
       try {
-        const response = await fetch(apiUrl(`/api/v1/moments/${job.id}`));
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.detail || "Could not read job status");
-        if (!cancelled) setJob(body);
+        const body = await fetchJson(`/api/v1/moments/${job.id}`, undefined, "Could not read job status");
+        if (!cancelled) {
+          setJob(body);
+          setError("");
+        }
       } catch (pollError) {
         if (!cancelled) setError(pollError.message);
       }
@@ -131,12 +142,7 @@ export default function App() {
     form.append("duration", "0");
 
     try {
-      const response = await fetch(apiUrl("/api/v1/moments"), {
-        method: "POST",
-        body: form,
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.detail || "Upload failed");
+      const body = await fetchJson("/api/v1/moments", { method: "POST", body: form }, "Upload failed");
       setJob(body);
       window.history.replaceState(null, "", `?job=${encodeURIComponent(body.id)}`);
     } catch (uploadError) {
@@ -151,8 +157,7 @@ export default function App() {
     try {
       const response = await fetch(apiUrl(`/api/v1/moments/${job.id}/splat`));
       if (!response.ok) {
-        const body = await response.json();
-        throw new Error(body.detail || "Download failed");
+        await readJson(response, "Download failed");
       }
       const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement("a");

@@ -140,6 +140,38 @@ def find_unity_executable(unity_project: Path = DEFAULT_UNITY_PROJECT, unity_exe
     )
 
 
+def _copy_if_present(source: Path, destination: Path) -> None:
+    if source.is_file():
+        shutil.copy2(source, destination)
+
+
+def _unity_import_command(
+    unity_exe: Path,
+    unity_project: Path,
+    log_path: Path,
+    input_ply: Path,
+    output_folder: str,
+    quality: str,
+) -> list[str]:
+    return [
+        str(unity_exe),
+        "-batchmode",
+        "-quit",
+        "-projectPath",
+        str(unity_project),
+        "-logFile",
+        str(log_path),
+        "-executeMethod",
+        "Reminiscence.Editor.BatchGaussianSplatImporter.ImportFromCommandLine",
+        "-gsInput",
+        str(input_ply),
+        "-gsOutputFolder",
+        output_folder,
+        "-gsQuality",
+        quality,
+    ]
+
+
 def transfer_fastgs_model_to_unity(
     model_dir: Path,
     unity_project: Path = DEFAULT_UNITY_PROJECT,
@@ -159,10 +191,7 @@ def transfer_fastgs_model_to_unity(
     output_folder_abs.mkdir(parents=True, exist_ok=True)
     copied_ply = output_folder_abs / f"{dataset_name}.ply"
     shutil.copy2(source_ply, copied_ply)
-
-    cameras_json = model_dir / "cameras.json"
-    if cameras_json.is_file():
-        shutil.copy2(cameras_json, output_folder_abs / "cameras.json")
+    _copy_if_present(model_dir / "cameras.json", output_folder_abs / "cameras.json")
 
     unity_asset_path = f"{output_folder_rel}/{dataset_name}.asset"
     unity_asset_abs_path = unity_project / Path(unity_asset_path.replace("/", os.sep))
@@ -176,24 +205,10 @@ def transfer_fastgs_model_to_unity(
         log_dir.mkdir(parents=True, exist_ok=True)
         unity_log_path = log_dir / f"gaussian_import_{dataset_name}.log"
 
-        cmd = [
-            str(unity_exe),
-            "-batchmode",
-            "-quit",
-            "-projectPath",
-            str(unity_project),
-            "-logFile",
-            str(unity_log_path),
-            "-executeMethod",
-            "Reminiscence.Editor.BatchGaussianSplatImporter.ImportFromCommandLine",
-            "-gsInput",
-            str(copied_ply),
-            "-gsOutputFolder",
-            output_folder_rel,
-            "-gsQuality",
-            quality,
-        ]
-        subprocess.run(cmd, check=True)
+        subprocess.run(
+            _unity_import_command(unity_exe, unity_project, unity_log_path, copied_ply, output_folder_rel, quality),
+            check=True,
+        )
 
         if not unity_asset_abs_path.is_file():
             raise FileNotFoundError(
@@ -235,6 +250,22 @@ def transfer_latest_fastgs_to_unity(
     )
 
 
+def _print_result(result: UnitySplatTransferResult) -> None:
+    for key in (
+        "dataset_name",
+        "source_ply",
+        "copied_ply",
+        "unity_asset_path",
+        "unity_asset_abs_path",
+        "unity_renderer_prefab_path",
+        "unity_latest_prefab_path",
+        "unity_log_path",
+    ):
+        value = getattr(result, key)
+        if value:
+            print(f"{key}={value}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Copy the newest FastGS PLY into Unity and import it as a splat asset.")
     parser.add_argument("--fastgs-output", type=Path, default=DEFAULT_FASTGS_OUTPUT_ROOT)
@@ -269,15 +300,7 @@ def main() -> int:
             quality=args.quality,
         )
 
-    print(f"dataset_name={result.dataset_name}")
-    print(f"source_ply={result.source_ply}")
-    print(f"copied_ply={result.copied_ply}")
-    print(f"unity_asset_path={result.unity_asset_path}")
-    print(f"unity_asset_abs_path={result.unity_asset_abs_path}")
-    print(f"unity_renderer_prefab_path={result.unity_renderer_prefab_path}")
-    print(f"unity_latest_prefab_path={result.unity_latest_prefab_path}")
-    if result.unity_log_path:
-        print(f"unity_log_path={result.unity_log_path}")
+    _print_result(result)
     return 0
 
 
